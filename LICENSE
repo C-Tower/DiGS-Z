@@ -672,3 +672,16 @@ may consider it more useful to permit linking proprietary applications with
 the library.  If this is what you want to do, use the GNU Lesser General
 Public License instead of this License.  But first, please read
 <https://www.gnu.org/licenses/why-not-lgpl.html>.
+
+======================================================================
+ADDITIONAL PERMISSION / LINKING EXCEPTION
+
+As a special exception to the GNU General Public License version 3.0, 
+the copyright holders of this software grant permission to link this 
+program with the proprietary ZWO ASI Camera SDK (including but not 
+limited to zwoasicamera2.dll, libasicamera2.so, and libasicamera2.dylib) 
+and distribute the resulting combination. 
+
+All other requirements of the GNU GPLv3 regarding your own source code 
+and any modifications remain fully in effect.
+======================================================================
