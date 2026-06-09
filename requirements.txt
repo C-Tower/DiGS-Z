@@ -1,0 +1,9 @@
+Required Python Libraries
+
+zwoasi (tested with 0.2.0)
+numpy (tested with 1.26.4)
+matplotlib (tested with 3.6.3)
+opencv-python (tested with 4.6.0)
+pillow (tested with 10.2.0)
+
+Note: some Linux users may have to install tkinter (tested with version 8.6)
