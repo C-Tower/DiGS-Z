@@ -26,7 +26,7 @@ from tkinter import filedialog
 from tkinter import messagebox
 
 #image manipulation
-import PIL,PIL.Image,PIL.ImageTk,PIL.ImageOps
+import PIL,PIL.Image,PIL.ImageTk,PIL.ImageOps,PIL.ImageDraw
 import cv2
 
 #data manipulation
@@ -125,17 +125,14 @@ class RoiCanvas(ttk.Frame):
 		img = img.astype(np.float32)
 		min_img = np.min(img)
 
-		#print(f"min max {np.min(img)}  {np.max(img)}")
-		#nested if statements to avoid copying large bitmap
-		#if min_img < 0:
 		img -= min_img
-		#print(f"min = {np.min(img)}")
+
 		if self.controller.roi_set_frame.log_ccd_var.get() == 1:
 			img = np.log(img + 1)
-			#print(f"min max {np.min(img)}  {np.max(img)}")
 
-		self.img_tkinter = PIL.Image.fromarray(255 * (img / np.max(img)))
-		#print(f"min max {np.min(255 * (img / np.max(img)))}  {np.max(255 * (img / np.max(img)))}")
+		if np.max(img) == 0:
+			return
+		self.img_tkinter = PIL.Image.fromarray(255 * img / np.max(img))
 		self.img_tkinter = PIL.ImageTk.PhotoImage(self.img_tkinter)
 
 		#self.canvas.image = img_tkinter # needed for pythons garbage collection
@@ -146,7 +143,6 @@ class RoiCanvas(ttk.Frame):
 		# save mouse drag start position
 		self.start_x = event.x
 		self.start_y = event.y
-		#print(f"start x: {self.start_x}, start y:{self.start_y}")
 
 		self.canvas_rectangle = self.canvas.create_rectangle(0, 0, 1, 1,outline='red', width=3 ,tags="rectangle")
 
@@ -176,17 +172,13 @@ class RoiCanvas(ttk.Frame):
 			if type(self.linked_graph) != type(None):
 				self.linked_graph.plot_bin(controller,
 											controller.ccd_bitmap[controller.canvas_rectangle_coords[0]:controller.canvas_rectangle_coords[1]])
-			# print(Variables.canvas_rectangle_coords)
-			# img = cv2.resize(Variables.bitmap[Variables.canvas_rectangle_coords[0]:Variables.canvas_rectangle_coords[1]], (canvas_width, abs( widget.end_y-widget.start_y)),interpolation = cv2.INTER_AREA)
-			# img = PIL.Image.fromarray(255 * (img / np.max(img)))
-			# img.show()
+
 
 			#set 
 			roi_center = float( (controller.canvas_rectangle_coords[0] + controller.canvas_rectangle_coords[1]) / 2 )
 			roi_height = (controller.canvas_rectangle_coords[1] - controller.canvas_rectangle_coords[0] )
 			self.controller.roi_set_frame.center_label.configure(text=str(roi_center))
 			self.controller.roi_set_frame.height_label.configure(text=str(roi_height))
-			#print("roi_canvas =",controller.canvas_rectangle_coords[0],controller.canvas_rectangle_coords[1] )
 
 		else:
 			#Variables.canvas_rectangle_coords = [0,Variables.bitmap]
@@ -196,13 +188,12 @@ class RoiCanvas(ttk.Frame):
 			if type(self.linked_graph) != type(None):
 				self.linked_graph.plot_bin(controller,
 											controller.ccd_bitmap[controller.canvas_rectangle_coords[0]:controller.canvas_rectangle_coords[1]])
-			# print(Variables.canvas_rectangle_coords)
+
 
 			roi_center = float( (controller.canvas_rectangle_coords[0] + controller.canvas_rectangle_coords[1]) / 2 )
 			roi_height = (controller.canvas_rectangle_coords[1] - controller.canvas_rectangle_coords[0] )
 			self.controller.roi_set_frame.center_label.configure(text=str(roi_center))
 			self.controller.roi_set_frame.height_label.configure(text=str(roi_height))
-			#print("roi_canvas =",controller.canvas_rectangle_coords[0],controller.canvas_rectangle_coords[1] )
 
 	def roi_rectangle_update(self,canvas_rectangle_coords,ccd_bitmap):
 		self.canvas.delete("rectangle")
@@ -399,7 +390,6 @@ class Bitmap:
 		
 		if file_type.lower() == "raw":
 			binary_array = img.reshape(-1)
-			#print(binary_array)
 
 			file = open(save_name, "wb")
 
@@ -436,12 +426,8 @@ class Bitmap:
 			file.close()
 
 		elif file_type.lower() == "png":
-			#print(img)
 			
 			cv2.imwrite(save_name, img)
-
-		#print(max_bitmap,min_bitmap)
-		#print(img.dtype)
 
 class CameraSelect(ttk.LabelFrame):
 	def __init__(self,parent,controller,text):
@@ -512,7 +498,6 @@ class CameraSelect(ttk.LabelFrame):
 			#set camera for main frame
 			self.controller.camera = selected_camera
 
-			#print(selected_camera.get_roi_format())
 			'''
 			-bin setting info
 			number of pixels to bin together ie: if bin = 2 each pixel in bitmap is a 2x2 block of actual ccd pixels 
@@ -681,7 +666,6 @@ class ImageTake(ttk.LabelFrame):
 
 	@threaded
 	def run(self):
-		print("run")
 
 		self.image_thread_event.clear()
 		setup_time_start = time.time()
@@ -716,9 +700,13 @@ class ImageTake(ttk.LabelFrame):
 
 		self.image_buttons_state("disable") #disable buttons while scanning
 
-		exposure_time = float(self.exposure_entry_var.get()) #user enters in seconds, gets converted to microseconds for zwo asi
-		average_number = float(self.average_entry_var.get())
-		gain = float(self.gain_entry_var.get())
+		try:
+			exposure_time = float(self.exposure_entry_var.get()) #user enters in seconds, gets converted to microseconds for zwo asi
+			average_number = float(self.average_entry_var.get())
+			gain = float(self.gain_entry_var.get())
+		except:
+			messagebox.showinfo("", "Invalid entries.")
+			return
 
 		self.controller.camera.set_control_value(zwoasi.ASI_EXPOSURE, int(exposure_time*1e6))
 		self.controller.camera.set_control_value(zwoasi.ASI_GAIN, int(gain))
@@ -751,6 +739,10 @@ class ImageTake(ttk.LabelFrame):
 
 			try:
 				bitmap = self.controller.camera.capture(initial_sleep=None, poll=None)
+				#check if there are bad pixels
+				if (self.controller.badpixel_map is not None) and (np.shape(self.controller.badpixel_map)[1] == ccd_width) and (np.shape(self.controller.badpixel_map)[0] == ccd_height):
+					median_img = cv2.medianBlur(bitmap,3)
+					bitmap[self.controller.badpixel_map] = median_img[self.controller.badpixel_map]
 			except:
 				if lost_scans == 0: #only print error once
 					#messagebox.showwarning("Camera Error!", "Count not recieve ccd bitmap from camera.\n frame skipped.")
@@ -817,7 +809,7 @@ class ImageTake(ttk.LabelFrame):
 		self.progress_bar_thread.join()
 		self.progress_bar_var.set( 1 )
 		self.eta_label.configure(text=f"{0}")
-		self.image_thread_event.set()
+		#self.image_thread_event.set()
 
 		self.image_buttons_state("enable") #re-enable buttons after scanning
 
@@ -978,6 +970,167 @@ class ImageTake(ttk.LabelFrame):
 		# Optional: Add a simple 'OK' button to close just the dialog
 		ok_button = ttk.Button(dialog, text="OK", command=dialog.destroy)
 		ok_button.pack(pady=10)
+
+class BadPixel(ttk.LabelFrame):
+	def __init__(self,parent,controller,label_frame_text=""):
+		super().__init__(parent,text=label_frame_text)
+
+		self.controller = controller
+
+		entries_frame = ttk.Frame(self)
+		entries_frame.grid(row=0,column=0,sticky="news")
+
+		#threshold
+		threshold_label = ttk.Label(entries_frame,text = "Threshold (%): ")
+		threshold_label.grid(row=0,column=0,sticky="w")
+
+		self.threshold_entry_var = tk.StringVar(value="100")
+		threshold_entry = ttk.Entry(entries_frame,width=4,textvariable=self.threshold_entry_var)
+		threshold_entry.grid(row=0,column=1,sticky="w",padx=5)
+
+		#iterations
+		iterations_label = ttk.Label(entries_frame,text = "iterations")
+		iterations_label.grid(row=1,column=0,sticky="w")
+
+		self.iterations_entry_var = tk.StringVar(value="3")
+		iterations_entry = ttk.Entry(entries_frame,width=4,textvariable=self.iterations_entry_var)
+		iterations_entry.grid(row=1,column=1,sticky="w",padx=5)
+
+		#buttons
+		button_frame = ttk.Frame(self)
+		button_frame.grid(row=1,column=0,pady = 10,sticky="news")
+
+		detect_button = ttk.Button(button_frame, text="run",command = self.bad_pixel_detect)
+		detect_button.grid(row=0,column=0,sticky="news")
+
+		show_button = ttk.Button(button_frame, text="show", command = self.draw_pixels)
+		show_button.grid(row=0,column=1,sticky="news")
+
+		undo_button = ttk.Button(button_frame, text="undo", command = self.undo)
+		undo_button.grid(row=0,column=2,sticky="news")
+
+		#bad pixel label
+		badpixels_frame = ttk.Frame(self)
+		badpixels_frame.grid(row=2,column=0,sticky="news")
+
+		self.badpixels_label = ttk.Label(badpixels_frame,text = "bad pixels: ")
+		self.badpixels_label.grid(row=0,column=0,sticky="w")
+
+
+	@threaded
+	def bad_pixel_detect(self):
+
+		if self.controller.camera == None:
+			messagebox.showinfo("", "No camera connected.")
+			print("camera not connected")
+			return
+
+		try:
+			threshold = float(self.threshold_entry_var.get()) / 100.0
+			iterations = int(self.iterations_entry_var.get())
+		except:
+			messagebox.showinfo("", "Invalid entries.")
+			return
+		#reset pixel map
+		self.controller.badpixel_map = None
+		#make sure cosmic ray removal is off
+		self.controller.image_take_frame.cosmic_ray_var.set(0)
+
+		badpixel_map_list = []
+
+		for i in range(iterations):
+
+			#take image and wait for it to complete
+			current_scan = self.controller.image_take_frame.run()
+			current_scan.join()
+
+			ccd_img = self.controller.ccd_bitmap.copy()
+
+			#medianBlur does not work with float64 so convert ccd_img to uint16
+			min_val = ccd_img.min()
+			if min_val < 0:
+				ccd_img += abs(min_val)
+			max_val = ccd_img.max()
+			if max_val > (2**16) -1:
+				ccd_img *= ((2**16) -1) / max_val
+			ccd_img = ccd_img.astype(dtype = np.uint16)
+
+			#apply median blur
+			median_img = cv2.medianBlur(ccd_img,3) #use a kernel of 3x3
+			#convert img and blur to float so there no over/underflow when subtracting
+			ccd_img = ccd_img.astype(dtype = np.float64)
+			median_img = median_img.astype(dtype = np.float64)
+
+			median_diff = np.abs(ccd_img - median_img)
+			threshold_img = median_img * threshold
+				
+			badpixel_map = median_diff > threshold_img
+			badpixel_map_list.append(badpixel_map)
+
+		badpixel_map = np.logical_and.reduce(badpixel_map_list)
+		self.controller.badpixel_map = badpixel_map
+		num_badpixels = np.sum(badpixel_map)
+		self.badpixels_label.config(text=f"bad pixels: {num_badpixels}")
+
+
+	@threaded
+	def draw_pixels(self):
+		bad_pixels_map = self.controller.badpixel_map.copy()
+		ccd_bitmap = self.controller.ccd_bitmap.copy()
+		if bad_pixels_map is None :
+			return
+
+		#get the shape of the currently open img canvas
+		current_tab_widget = self.controller.tab_control.select() 
+		current_tab_index = self.controller.tab_control.index(current_tab_widget)
+
+		if current_tab_index == 0:
+			canvas_width = self.controller.tab1_roi.canvas.winfo_width()
+			canvas_height = self.controller.tab1_roi.canvas.winfo_height()
+		elif current_tab_index == 1 :
+			canvas_width = self.controller.tab2_graph.winfo_width()
+			canvas_height = self.controller.tab2_graph.winfo_height()
+		elif current_tab_index == 2 :
+			canvas_width = self.controller.tab3_roi.canvas.winfo_width()
+			canvas_height = self.controller.tab3_roi.canvas.winfo_height()
+
+		bitmap_width = np.shape(ccd_bitmap)[1]
+		bitmap_height = np.shape(ccd_bitmap)[0]
+
+		scale_y =  canvas_height / bitmap_height
+		scale_x =  canvas_width / bitmap_width
+
+		#resize to canvas size
+		ccd_bitmap = cv2.resize(ccd_bitmap, (canvas_width, canvas_height),interpolation = cv2.INTER_AREA)
+		ccd_bitmap = ccd_bitmap.astype(dtype = np.float32)
+		min_val = ccd_bitmap.min()
+		ccd_bitmap -= min_val
+
+		if self.controller.roi_set_frame.log_ccd_var.get() == 1:
+			ccd_bitmap = np.log(ccd_bitmap + 1)
+
+		#convert ccd img to int8		
+		max_val = ccd_bitmap.max()
+		ccd_bitmap *= ((2**8) -1) / max_val
+		ccd_bitmap = ccd_bitmap.astype(dtype = np.uint8)
+
+		img = PIL.Image.fromarray(ccd_bitmap)
+		img = img.convert("RGB")
+		
+		draw = PIL.ImageDraw.Draw(img)
+		radius = 0.01*canvas_width
+		y_indices,x_indices = np.where(bad_pixels_map == True)
+		for xi,yi in zip(x_indices,y_indices):
+			xi_scaled,yi_scaled = int(xi*scale_x),int(yi*scale_y)
+
+			top_left = (xi_scaled-radius,yi_scaled-radius)
+			bottom_right = (xi_scaled+radius,yi_scaled+radius)
+			draw.ellipse([top_left,bottom_right],outline="red", width = 3)
+		img.show()
+
+		
+	def undo(self):
+		self.controller.badpixel_map = None
 
 class Calibration(ttk.LabelFrame):
 	def __init__(self,parent,controller,label_frame_text=""):
@@ -1145,7 +1298,10 @@ class Calibration(ttk.LabelFrame):
 			self.controller.x = self.polynomial_function(self.controller.x,calibration_fit)
 
 		calibration_figure = plt.figure()
+		calibration_figure.canvas.manager.set_window_title('Calibration Fit')
 		calibration_figure_ax = calibration_figure.add_subplot(1,1,1)
+		calibration_figure_ax.set_xlabel("current x")
+		calibration_figure_ax.set_ylabel("calibration points x")
 		calibration_figure_ax.plot(data_x,calibration_x,".")
 		calibration_figure_ax.plot(x_fit,self.polynomial_function(x_fit,calibration_fit))
 		plt.show()
@@ -1235,7 +1391,6 @@ class Temperature(ttk.LabelFrame):
 		self.cooler_button.grid(row=0,column=0)
 	@threaded
 	def cooler(self):
-		#print("state ",self.temperature_thread_event.is_set())
 		if self.controller.camera == None:
 			messagebox.showinfo("", "No camera connected.")
 			print("camera not connected")
@@ -1292,7 +1447,7 @@ class Temperature(ttk.LabelFrame):
 				self.current_temperature_label.configure(foreground="blue")
 			time.sleep(1)
 
-		print("done temp loop")
+		#print("done temp loop")
 
 class ROISet(ttk.LabelFrame):
 	def __init__(self,parent,controller,label_frame_text=""):
@@ -1356,33 +1511,10 @@ class ROISet(ttk.LabelFrame):
 
 		self.controller.canvas_rectangle_coords[0] = int( roi_center - (roi_height/2) )
 		self.controller.canvas_rectangle_coords[1] = int( roi_center + (roi_height/2) )
-		print("roi_button =",self.controller.canvas_rectangle_coords[0],self.controller.canvas_rectangle_coords[1] )
+		#print("roi_button =",self.controller.canvas_rectangle_coords[0],self.controller.canvas_rectangle_coords[1] )
 
 		self.center_label.configure(text=str(roi_center))
 		self.height_label.configure(text=str(roi_height))
 
 		self.controller.canvas_graph_update()
-
-class ThreadTest(ttk.Frame):
-	def __init__(self,parent_window,main_window,thread_text):
-		super().__init__(parent_window)
-		#self.thread_text = thread_text
-		self.main_window = main_window
-
-		ttk.Label(self, text=f"Thread test: ").pack(side="left")
-		ttk.Button(self, text="print",command = lambda: self.threaded_print(thread_text) ).pack(side="right")
-		ttk.Button(self, text="stop",command = self.stop_thread ).pack(side="right")
-
-	@threaded #thread decorated function
-	def threaded_print(self,thread_text):
-		if self.main_window.thread_bool:
-			print(thread_text)
-			time.sleep(0.5)
-			self.threaded_print(thread_text)
-
-	def stop_thread(self):
-		if self.main_window.thread_bool == False:
-			self.main_window.thread_bool = True
-		else:
-			self.main_window.thread_bool = False
 		 

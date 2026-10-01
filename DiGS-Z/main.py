@@ -22,7 +22,7 @@ proprietary ZWO ASI Camera SDK as specified in the repository's LICENSE file.
 
 __author__ = "Collin Tower"
 __license__ = 'GNU GPL V3.0'
-__version__ = "1.0.0"
+__version__ = "1.2.0"
 
 #gui imports
 import tkinter as tk
@@ -46,15 +46,23 @@ import zwoasi
 import threading
 import time
 
+
 #find operating system
 import platform
-os_name = platform.system()
-print(f"OS: {os_name}")
+import os
 
-if os_name == "Windows":
-	zwoasi.init(r"lib/ASICamera2.dll")
-elif os_name == "Linux":
-	zwoasi.init(r"lib/libASICamera2.so.1.40")
+try:
+	os_name = platform.system()
+	print(f"OS: {os_name}")
+	lib = os.listdir("lib/")
+	if os_name == "Windows":
+		lib = [x for x in lib if ("dll" in x)]
+		zwoasi.init("lib/"+lib[0])
+	elif os_name == "Linux":
+		lib = [x for x in lib if ("so" in x)]
+		zwoasi.init("lib/"+lib[0])
+except:
+	print("\nlib files not found\n")
 
 num_cameras = zwoasi.get_num_cameras()
 print("camera number: ",num_cameras)
@@ -72,14 +80,13 @@ class Application(tk.Tk):
 		# Window setup #
 		################
 		self.title("DiGS-Z")
-		logo = tk.PhotoImage(file="img/logo.png")
-		self.wm_iconphoto(True, logo)
+
 		try:
-			self.iconbitmap("steve.ico")
+			logo = tk.PhotoImage(file="img/logo.png")
+			self.wm_iconphoto(True, logo)
 		except:
-			#img = tk.PhotoImage(file='steve.png')
-			#self.iconphoto(True,img)
-			pass
+			print("logo.png not found")
+
 		#window sizing
 		screen_width = self.winfo_screenwidth()
 		screen_height = self.winfo_screenheight()
@@ -98,10 +105,16 @@ class Application(tk.Tk):
 	# "global" variables #
 	######################
 		self.camera = None
-		self.ccd_bitmap = cv2.imread("img/Default.png", cv2.IMREAD_UNCHANGED) 
+		try:
+			self.ccd_bitmap = cv2.imread("img/Default.png", cv2.IMREAD_UNCHANGED)
+		except:
+			self.ccd_bitmap = None
+			print("Default.png not found") 
 		self.ccd_bitmap_background = None
 		self.x, self.y = None, None
 		self.canvas_rectangle_coords = [None,None]
+
+		self.badpixel_map = None
 
 		self.calibration_window = None
 	################
@@ -121,6 +134,9 @@ class Application(tk.Tk):
 		filemenu.add_separator()
 		filemenu.add_command(label="load calibration", command= self.load_calibration)
 		filemenu.add_command(label="save calibration", command= self.save_calibration)
+		filemenu.add_separator()
+		filemenu.add_command(label="save bad pixels", command= self.save_badpixels)
+		filemenu.add_command(label="load bad pixels", command= self.load_badpixels)
 		filemenu.add_separator()
 		filemenu.add_command(label="save spectra", command=self.save_spectra )
 
@@ -153,6 +169,13 @@ class Application(tk.Tk):
 		self.image_take_frame = classes.ImageTake(scroll_frame_container.scrollable_frame,self,label_frame_text="Take Image")
 		self.image_take_frame.configure(padding=5)
 		self.image_take_frame.pack(fill="x")
+
+		###################
+		# Bad Pixel frame #
+		###################
+		self.badpixel_frame = classes.BadPixel(scroll_frame_container.scrollable_frame,self,label_frame_text="Bad Pixels")
+		self.badpixel_frame.configure(padding=5)
+		self.badpixel_frame.pack(fill="x")
 
 		#####################
 		# Calibration frame #
@@ -266,6 +289,48 @@ class Application(tk.Tk):
 			self.tab3_roi.canvas_update(self.ccd_bitmap)
 			self.tab3_roi.roi_rectangle_update(self.canvas_rectangle_coords,self.ccd_bitmap)
 
+	#################
+	# Save and Load #
+	#################
+
+	def save_badpixels(self):
+		if self.badpixel_map is None:
+			return
+
+		save_file_name = filedialog.asksaveasfilename(defaultextension=".csv")
+		file = open(save_file_name, "w")
+
+		bitmap_width = np.shape(self.badpixel_map)[1]
+		bitmap_height = np.shape(self.badpixel_map)[0]
+		header = f"h,w={bitmap_height},{bitmap_width}\n"
+		file.write(header)
+		coords = np.argwhere(self.badpixel_map)
+
+		for i in range(len(coords)):
+			file.write(str(coords[i][0])+","+str(coords[i][1])+"\n")
+
+		file.close()
+
+
+	def load_badpixels(self):
+		coords = []
+		filename = filedialog.askopenfilename()
+
+		file = open(filename,'r')
+
+		header = file.readline().strip()
+		header = header.split("=")[-1]
+		height,width = int(header.split(",")[0]),int(header.split(",")[1])
+
+		for i in file:
+			row,col = i.strip().split(",")
+			coords.append([int(row),int(col)])
+		coords = np.array(coords)
+		badpixel_map = np.zeros((height,width),dtype=bool)
+		badpixel_map[coords[:,0],coords[:,1]] = True
+
+		self.badpixel_map = badpixel_map
+
 	def save_spectra(self):
 		save_file_name = filedialog.asksaveasfilename(defaultextension=".csv")
 
@@ -330,7 +395,9 @@ class Application(tk.Tk):
 	    )
 	    messagebox.showinfo(title, message)
 
-
+	##############################
+	# Closing and ending threads #
+	##############################
 	def on_close_window(self): #function used for closing the ports when closing the window
 		#stop any running scans
 		self.image_take_frame.stop()
